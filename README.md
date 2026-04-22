@@ -47,7 +47,7 @@ You need to provide:
 - external data under `data/`
 - trained checkpoints under `saved_models/`
 
-Expected data roots:
+Expected data roots below are the paths used by the authors in the manuscript experiments. They can be changed to match your own local setup, as long as the config files and loaders are updated consistently:
 
 ```text
 data/ddpm/external/hr_5000_simulations
@@ -55,7 +55,7 @@ data/ddpm/external/uhr_0050_simulations
 data/ddpm/external/hr_5000_simulations_non_overlap
 ```
 
-Expected checkpoint paths:
+The checkpoint paths below are the default locations used by the authors. They can be changed to match your own setup by updating the corresponding config files or script arguments:
 
 ```text
 saved_models/SRDA/exp1/weight_diffusion.pth
