@@ -1,0 +1,44 @@
+datasets:
+  beta_dist_alpha: 2
+  beta_dist_beta: 5
+  data_dir: /data/ddpm/external/hr_5000_simulations
+  dataset_name: LatentDataset
+  fill_missing_value: false
+  max_start_time_index: 96
+  min_start_time_index: 0
+  missing_value: -1.1
+  mixup_num: 200
+  nx: 128
+  ny: 64
+  obs_grid_interval: 8
+  obs_noise_std: 0.1
+  obs_time_interval: 4
+  omega_max: 14.015356
+  omega_min: -14.146547
+  scale_factor: 4
+  train_batch_size: 64
+  train_data_len: 120000
+  use_mixup: true
+  use_observation: true
+  valid_batch_size: 512
+  valid_data_len: 30000
+latent_model:
+  model:
+    beta: 0.25
+    compression_factor: 4
+    embedding_dim: 1
+    hidden_channels: 64
+    in_channels: 1
+    num_embeddings: 2000
+    num_res_layers: 3
+    out_channels: 1
+    res_hidden_channels: 64
+  model_type: vqvae_pixelshuffle
+path:
+  log: /work/SRDA/latent_vqvae/logs
+  model: /saved_models/SRDA/latent_vqvae_ogi08
+  processed: /work/SRDA/latent_vqvae/processed
+train_latent_model:
+  early_stopping_patience: 30
+  learning_rate: 0.0001
+  num_epochs: 2000

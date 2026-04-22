@@ -1,0 +1,436 @@
+import typing
+from logging import getLogger
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from src.yasuda.ml_model.conv2d_block import DecoderBlock, EncoderBlock
+
+logger = getLogger()
+
+
+class Encoder(nn.Module):
+    def __init__(
+        self,
+        *,
+        x_feat_channels_0: int,
+        x_feat_channels_1: int,
+        x_feat_channels_2: int,
+        o_feat_channels_0: int,
+        o_feat_channels_1: int,
+        o_feat_channels_2: int,
+        o_feat_channels_3: int,
+        out_channels: int,
+        kernel_size: int = 3,
+        num_layers_x_encoder: int = 2,
+        num_layers_o_encoder: int = 2,
+        bias_x_encoder: bool = False,
+        bias_o_encoder: bool = False,
+        scale_factor: int = 4,
+    ):
+        super(Encoder, self).__init__()
+        self.scale_factor = scale_factor
+
+        self.x_encoder = nn.Sequential(
+            EncoderBlock(
+                in_channels=(x_feat_channels_0 + o_feat_channels_0),
+                out_channels=x_feat_channels_1,
+                kernel_size=kernel_size,
+                stride=4,
+                bias=bias_x_encoder,
+                num_layers=num_layers_x_encoder,
+            ),
+            EncoderBlock(
+                in_channels=x_feat_channels_1,
+                out_channels=x_feat_channels_2,
+                kernel_size=kernel_size,
+                stride=2,
+                bias=bias_x_encoder,
+                num_layers=num_layers_x_encoder,
+            ),
+            EncoderBlock(
+                in_channels=x_feat_channels_2,
+                out_channels=out_channels,
+                kernel_size=kernel_size,
+                stride=2,
+                bias=bias_x_encoder,
+                num_layers=num_layers_x_encoder,
+            ),
+        )
+
+        self.o_encoder = nn.Sequential(
+            EncoderBlock(
+                in_channels=o_feat_channels_0,
+                out_channels=o_feat_channels_1,
+                kernel_size=kernel_size,
+                stride=2,
+                bias=bias_o_encoder,
+                num_layers=num_layers_o_encoder,
+            ),
+            EncoderBlock(
+                in_channels=o_feat_channels_1,
+                out_channels=o_feat_channels_2,
+                kernel_size=kernel_size,
+                stride=2,
+                bias=bias_o_encoder,
+                num_layers=num_layers_o_encoder,
+            ),
+            EncoderBlock(
+                in_channels=o_feat_channels_2,
+                out_channels=o_feat_channels_3,
+                kernel_size=kernel_size,
+                stride=2,
+                bias=bias_o_encoder,
+                num_layers=num_layers_o_encoder,
+            ),
+            EncoderBlock(
+                in_channels=o_feat_channels_3,
+                out_channels=out_channels,
+                kernel_size=kernel_size,
+                stride=2,
+                bias=bias_o_encoder,
+                num_layers=num_layers_o_encoder,
+            ),
+        )
+
+    def forward(
+        self, x: torch.Tensor, obs: torch.Tensor
+    ) -> typing.Tuple[torch.Tensor, torch.Tensor]:
+
+        y = torch.cat([x, obs], dim=1)  # concat along channel dims
+        y = self.x_encoder(y)
+
+        z = self.o_encoder(obs)
+
+        return y, z
+
+
+class Decoder(nn.Module):
+    def __init__(
+        self,
+        feat_channels_0: int,
+        feat_channels_1: int,
+        feat_channels_2: int,
+        feat_channels_3: int,
+        out_channels: int,
+        kernel_size: int = 3,
+        num_layers: int = 2,
+        bias: bool = False,
+    ):
+        super(Decoder, self).__init__()
+
+        self.decoder = nn.Sequential(
+            DecoderBlock(
+                in_channels=feat_channels_0,
+                out_channels=feat_channels_1,
+                kernel_size=kernel_size,
+                bias=bias,
+                num_layers=num_layers,
+            ),
+            DecoderBlock(
+                in_channels=feat_channels_1,
+                out_channels=feat_channels_2,
+                kernel_size=kernel_size,
+                bias=bias,
+                num_layers=num_layers,
+            ),
+            DecoderBlock(
+                in_channels=feat_channels_2,
+                out_channels=feat_channels_3,
+                kernel_size=kernel_size,
+                bias=bias,
+                num_layers=num_layers,
+            ),
+            DecoderBlock(
+                in_channels=feat_channels_3,
+                out_channels=out_channels,
+                kernel_size=kernel_size,
+                bias=bias,
+                num_layers=num_layers,
+            ),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.decoder(x)
+
+
+class OptInterpWeightCalculator(nn.Module):
+    def __init__(self, input_size: int, output_size: int, bias: bool = False):
+        super(OptInterpWeightCalculator, self).__init__()
+
+        self.weight_calculator = nn.Sequential(
+            nn.Linear(input_size, output_size, bias=bias),
+            nn.ReLU(),
+            nn.Linear(output_size, output_size, bias=True),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.weight_calculator(x)
+
+
+class TransformerTimeSeriesMappingBlock(nn.Module):
+    def __init__(
+        self,
+        *,
+        d_model: int,
+        nhead: int,
+        dim_feedforward: int,
+        sequence_length: int,
+        bias: bool = False,
+    ):
+        super(TransformerTimeSeriesMappingBlock, self).__init__()
+
+        self.input_size = d_model
+        self.sequence_length = sequence_length
+
+        self.w_calc = OptInterpWeightCalculator(
+            input_size=2 * d_model,
+            output_size=d_model,
+            bias=bias,
+        )
+
+        self.transformer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=nhead,
+            dim_feedforward=dim_feedforward,
+            batch_first=True,
+        )
+
+        pos = torch.linspace(0, 1, steps=self.sequence_length, dtype=torch.float32)
+        pos = pos[None, :, None]  # add batch and channel dims
+        self.positions = nn.Parameter(pos, requires_grad=False)
+
+        self.linear1 = nn.Linear(d_model, d_model - 1, bias=bias)
+        self.linear2 = nn.Linear(d_model, d_model, bias=bias)
+
+    def forward(self, x: torch.Tensor, obs: torch.Tensor) -> torch.Tensor:
+        _x = x.contiguous().view(-1, self.input_size)
+        _o = obs.view(-1, self.input_size)
+
+        w = self.w_calc(torch.cat([_x, _o], dim=1))
+        w = w.view(-1, self.sequence_length, self.input_size)
+
+        y = w * x + (1.0 - w) * obs
+        y = self.linear1(y)
+
+        pos = torch.broadcast_to(self.positions, (y.shape[0], y.shape[1], 1))
+        y = torch.cat([pos, y], dim=2)  # cocat along channel
+
+        y = self.transformer(y)
+        y = self.linear2(y)
+
+        return y
+
+
+class TimeSeriesMapper(nn.Module):
+    def __init__(
+        self,
+        *,
+        d_model: int,
+        nhead: int,
+        dim_feedforward: int,
+        sequence_length: int,
+        n_transformer_blocks: int = 1,
+        bias: bool = False,
+        use_global_skip_connection: bool = True,
+    ):
+        super(TimeSeriesMapper, self).__init__()
+
+        self.use_global_skip_connection = use_global_skip_connection
+
+        self.transformers = nn.Sequential(
+            *[
+                TransformerTimeSeriesMappingBlock(
+                    d_model=d_model,
+                    nhead=nhead,
+                    dim_feedforward=dim_feedforward,
+                    sequence_length=sequence_length,
+                    bias=bias,
+                )
+                for _ in range(n_transformer_blocks)
+            ]
+        )
+
+    def forward(self, x: torch.Tensor, obs: torch.Tensor) -> torch.Tensor:
+        y = x
+        for trans in self.transformers:
+            y = trans(y, obs)
+
+        if self.use_global_skip_connection:
+            return y + x
+        else:
+            return y
+
+
+class ConvTransformerSrDaNetVer01(nn.Module):
+    def __init__(
+        self,
+        *,
+        in_channels: int,
+        feat_channels_0: int,
+        feat_channels_1: int,
+        feat_channels_2: int,
+        feat_channels_3: int,
+        latent_channels: int,
+        out_channels: int,
+        n_multi_attention_heads: int,
+        sequence_length: int,
+        n_transformer_blocks: int = 1,
+        use_global_skip_connection_in_ts_mapper: bool = True,
+        scale_factor: int = 4,
+        lr_x_size: int = 32,
+        lr_y_size: int = 16,
+        kernel_size: int = 3,
+        bias: bool = False,
+    ):
+        super(ConvTransformerSrDaNetVer01, self).__init__()
+
+        p = kernel_size // 2
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.sequence_length = sequence_length
+        logger.info(f"Sequence length = {self.sequence_length}")
+
+        self.scale_factor = scale_factor
+        self.lr_x_size = lr_x_size
+        self.lr_y_size = lr_y_size
+        self.hr_x_size = lr_x_size * self.scale_factor
+        self.hr_y_size = lr_y_size * self.scale_factor
+
+        # 16 == 2**4 (encoder has 4 blocks to down sample)
+        self.latent_x_size = self.hr_x_size // 16
+        self.latent_y_size = self.hr_y_size // 16
+
+        self.latent_channels = latent_channels
+        self.latent_dim = self.latent_x_size * self.latent_y_size * self.latent_channels
+
+        logger.info(f"LR size y = {self.lr_y_size}, x = {self.lr_x_size}")
+        logger.info(f"HR size y = {self.hr_y_size}, x = {self.hr_x_size}")
+        logger.info(f"Latent size y = {self.latent_y_size}, x = {self.latent_x_size}")
+        logger.info(
+            f"latent dim = {self.latent_dim}, latent channels = {self.latent_channels}"
+        )
+        logger.info(f"bias = {bias}")
+        logger.info(
+            f"use global skip connection = {use_global_skip_connection_in_ts_mapper}"
+        )
+
+        self.x_feat_extractor = nn.Conv2d(
+            in_channels, feat_channels_0, kernel_size, padding=p, bias=bias
+        )
+        self.o_feat_extractor = nn.Conv2d(
+            in_channels, feat_channels_0, kernel_size, padding=p, bias=bias
+        )
+        self.encoder = Encoder(
+            x_feat_channels_0=feat_channels_0,
+            x_feat_channels_1=feat_channels_1,
+            x_feat_channels_2=feat_channels_2,
+            o_feat_channels_0=feat_channels_0,
+            o_feat_channels_1=feat_channels_0,
+            o_feat_channels_2=feat_channels_0,
+            o_feat_channels_3=feat_channels_0,
+            out_channels=latent_channels,
+            bias_x_encoder=bias,
+            bias_o_encoder=bias,
+        )
+
+        if n_transformer_blocks > 0:
+            self.opt_itp = None
+            self.ts_mapper = TimeSeriesMapper(
+                d_model=self.latent_dim,
+                nhead=n_multi_attention_heads,
+                dim_feedforward=self.latent_dim,
+                sequence_length=self.sequence_length,
+                n_transformer_blocks=n_transformer_blocks,
+                bias=bias,
+                use_global_skip_connection=use_global_skip_connection_in_ts_mapper,
+            )
+        else:
+            self.ts_mapper = None
+            self.opt_itp = nn.Sequential(
+                nn.Conv2d(
+                    2 * latent_channels, latent_channels, kernel_size=1, padding=0, bias=bias
+                ),
+                nn.ReLU(),
+                nn.Conv2d(latent_channels, latent_channels, kernel_size=1, padding=0, bias=bias),
+            )
+
+        self.decoder = Decoder(
+            feat_channels_0=latent_channels,
+            feat_channels_1=feat_channels_3,
+            feat_channels_2=feat_channels_2,
+            feat_channels_3=feat_channels_1,
+            out_channels=feat_channels_0,
+            bias=bias,
+        )
+
+        self.reconstructor = nn.Sequential(
+            nn.Conv2d(
+                3 * feat_channels_0, out_channels, kernel_size, padding=p, bias=True
+            )
+        )
+
+    def forward(self, xs: torch.Tensor, obs: torch.Tensor) -> torch.Tensor:
+        if self.sequence_length == 1:
+            assert xs.shape[1:] == (
+                self.in_channels,
+                self.lr_y_size,
+                self.lr_x_size,
+            )
+            assert obs.shape[1:] == (
+                self.in_channels,
+                self.hr_y_size,
+                self.hr_x_size,
+            )
+
+        else:
+            assert xs.shape[1:] == (
+                self.sequence_length,
+                self.in_channels,
+                self.lr_y_size,
+                self.lr_x_size,
+            )
+            assert obs.shape[1:] == (
+                self.sequence_length,
+                self.in_channels,
+                self.hr_y_size,
+                self.hr_x_size,
+            )
+
+        x = xs.view(-1, self.in_channels, self.lr_y_size, self.lr_x_size)
+        x = F.interpolate(x, scale_factor=self.scale_factor, mode="nearest")
+
+        o = obs.view(-1, self.in_channels, self.hr_y_size, self.hr_x_size)
+
+        feat_x = self.x_feat_extractor(x)
+        feat_o = self.o_feat_extractor(o)
+
+        latent_x, latent_o = self.encoder(feat_x, feat_o)
+
+        if self.opt_itp is None:
+            latent_x = latent_x.view(-1, self.sequence_length, self.latent_dim)
+            latent_o = latent_o.view(-1, self.sequence_length, self.latent_dim)
+            latent_f = self.ts_mapper(latent_x, latent_o)
+        else:
+            latent_f = self.opt_itp(torch.cat([latent_x, latent_o], dim=1))
+            latent_f = latent_f + latent_x  # skip connection
+
+        latent_f = latent_f.contiguous().view(
+            -1,
+            self.latent_channels,
+            self.latent_y_size,
+            self.latent_x_size,
+        )
+
+        y = self.decoder(latent_f)
+        y = torch.cat([y, feat_x, feat_o], dim=1)  # concat along channel
+        y = self.reconstructor(y)
+
+        if self.sequence_length == 1:
+            return y.view(-1, self.out_channels, self.hr_y_size, self.hr_x_size)
+
+        return y.view(
+            -1, self.sequence_length, self.out_channels, self.hr_y_size, self.hr_x_size
+        )

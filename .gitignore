@@ -1,0 +1,28 @@
+# Local datasets and checkpoints
+/data/*
+!/data/README.md
+/saved_models/*
+!/saved_models/README.md
+
+# Local outputs
+/work/
+/reports/
+/reports_notsu/
+/backups/
+
+# Python and notebook caches
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+*.log
+.env
+.DS_Store
+
+# Local environments and caches
+.venv/
+.cache/
+.pytest_cache/
+.mypy_cache/
+
+# Local manuscript/context files for maintainers
+/noncommit/

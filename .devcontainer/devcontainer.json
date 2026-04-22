@@ -1,0 +1,23 @@
+{
+  "name": "diffsrda",
+  "build": {
+    "dockerfile": "../Dockerfile",
+    "context": ".."
+  },
+  "remoteUser": "root",
+  "runArgs": [
+    "--gpus", "all",
+    "--shm-size=16g"
+  ],
+  "containerEnv": {
+    "PYTHONPATH": "${containerWorkspaceFolder}/python"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python"
+      ]
+    }
+  },
+  "postCreateCommand": "bash ${containerWorkspaceFolder}/.devcontainer/postCreate.sh"
+}

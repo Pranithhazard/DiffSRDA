@@ -1,0 +1,80 @@
+datasets:
+  train_batch_size: 64
+  valid_batch_size: 250
+  test_batch_size: 64
+  data_dir: /data/ddpm/external/hr_5000_simulations
+  dataset_name: SrdaByLdmDataset
+  train_data_len: 120000
+  valid_data_len: 10000
+  omega_max: 14.015356
+  omega_min: -14.146547
+  scale_factor: 4
+  obs_time_interval: 4
+  obs_grid_interval: 8
+  obs_noise_std: 0.1
+  use_observation: true
+  beta_dist_alpha: 2
+  beta_dist_beta: 5
+  use_mixup: true
+  mixup_num: 200
+  fill_missing_value: false
+  missing_value: -1.1
+  nx: 128
+  ny: 64
+  min_start_time_index: 0
+  max_start_time_index: 96
+  max_start_time_index_latent: 96
+  min_start_time_index_latent: 0
+  num_workers: 0
+
+diffusion_model:
+  beta_schedule:
+    train:
+      linear_end: 0.02
+      linear_start: 0.0001
+      n_timestep: 1000
+      schedule: linear
+    val:
+      linear_end: 0.02
+      linear_start: 0.0001
+      n_timestep: 1000
+      schedule: linear
+      timestep_respacing:
+        - 10
+  diffusion:
+    channels: 5
+    conditional: true
+    eta: 1
+    image_size_x: 128
+    image_size_y: 64
+    loss_type: l1
+  finetune_norm: false
+  model_type: ddim
+  phase: train
+  unet:
+    attn_res:
+      - 8
+    channel_multiplier:
+      - 1
+      - 8
+      - 8
+    dropout: 0.5
+    in_channel: 10
+    inner_channel: 64
+    norm_groups: 32
+    out_channel: 5
+    res_blocks: 3
+
+path:
+  log: /work/SRDA/exp2/logs
+  model: /saved_models/SRDA/exp2
+  latent_model: /python/configs/srda/latent_vqvae/vqvae_pixelshuffle_ogi08.yaml
+
+train_diffusion_model:
+  early_stopping_patience: 50
+  num_epochs: 2000
+  optimizer:
+    lr: 0.0001
+    type: adam
+  use_recon_loss: true
+  val_freq: 1

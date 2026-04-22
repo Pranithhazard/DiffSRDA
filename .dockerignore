@@ -1,0 +1,29 @@
+.git
+.cache
+.venv
+__pycache__
+*.py[cod]
+.pytest_cache
+.mypy_cache
+.ipynb_checkpoints
+
+# Local-only inputs, checkpoints, outputs, and manuscript context.
+data/*
+!data/README.md
+saved_models/*
+!saved_models/README.md
+work/
+reports/
+reports_notsu/
+backups/
+noncommit/
+
+# Common generated research artifacts.
+*.ipynb
+*.npy
+*.npz
+*.pickle
+*.pkl
+*.pth
+*.pt
+*.ckpt
